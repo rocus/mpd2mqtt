@@ -32,15 +32,15 @@ log_info()
 {
   if [ "${debug}" != "0" ]
   then
-    short_logfile
-    echo "$1"
+#    short_logfile
+#    echo "$1"
     date "+%x %X : $1" >> ${logfile}
   fi
 }
 
 log_error()
 {
-  short_logfile
+#  short_logfile
   echo "$1" >&2
   date "+%x %X : $1" >> ${logfile}
 }
@@ -55,6 +55,7 @@ mqtt_topic_set="music/mpd/set"
 mqtt_user=""
 mqtt_password=""
 debug="1"
+
 if [ -f "./data/mpd2mqtt.config" ]
 then
   # Read parameters from config file
@@ -107,7 +108,7 @@ read_parameters()
         debug="${option_value}"
       ;;
       "*")
-        log_error "Unknown command line option: \"$1\""
+        log_error "ERROR: Unknown command line option: \"$1\""
         exit 1
       ;;
     esac
@@ -170,39 +171,33 @@ send_to_mqtt()  #$1 = message
 {
   #use a timeout to avoid a flood of waiting threads.
   timeout 10   mosquitto_pub  -h "${mqtt_server}" -t "${mqtt_topic_get}" -m "$1" -u "${mqtt_user}" -P "${mqtt_password}"
+  log_info "send_2_mqtt: $1 "
 }
-
 
 update_mpd_player_state()
 {
-  log_info "update_mpd_player_state()"
+  mpc --host="${mpd_host}" --port="${mpd_port}" status
   current_song_json=$( mpc --host="${mpd_host}" --port="${mpd_port}" current --format="${mpd_format}" )
+  log_info "update_mpd_player_state current (${current_song_json})"
   current_state=$( mpc --host="${mpd_host}" --port="${mpd_port}" status | grep "^\[.*\]" | tail -n 1 )
+  current_nr=$( mpc --host="${mpd_host}" --port="${mpd_port}" status | head -n 2 | tail -n 1)
+  current_vol=$( mpc --host="${mpd_host}" --port="${mpd_port}" status | grep "^volume" | cut -c8,9,10)
+  log_info "update_mpd_player_state status (${current_state})"
   if [ "${current_state}" != "" ]
   then
     current_state=$( echo "${current_state}" | sed "s#^\[\(.*\)\].*\$#\1#" )
   else
     current_state="stopped"
   fi
-  
-  if [ "${debug}" != "0" ]
-  then
-    echo "Message:  {\"player\": { \"current\" : ${current_song_json}, \"state\": \"${current_state}\" } }"
-  fi
-  send_to_mqtt "{\"player\": { \"current\" : ${current_song_json}, \"state\": \"${current_state}\" } }"
+  send_to_mqtt "{\"player\": { \"current\" : ${current_song_json}, \"state\": \"${current_state}\" , \"playnr\":\"${current_nr}\", \"volume\":\"${current_vol}\"} }"
 }
 
 update_mpd_playlist_state()
 {
-  log_info "update_mpd_playlist_state()"
   albums=$( mpc --host="${mpd_host}" --port="${mpd_port}" playlist --format "%artist% - %album%" | sort | uniq )
   album_count=$( echo "${albums}" | grep -c "..*" )
   if [ "${album_count}" = "1" ]
   then
-    if [ "${debug}" != "0" ]
-    then
-      echo "Message:  {\"playlist\": { \"type\": \"album\", \"album\" : \"${albums}\" , \"displayName\" : \"${albums}\" } }"
-    fi
     send_to_mqtt "{\"playlist\": { \"type\": \"album\", \"album\" : \"${albums}\", \"displayName\" : \"${albums}\" } }"
     return
   fi
@@ -210,35 +205,24 @@ update_mpd_playlist_state()
   folder_count=$( echo "${folders}" | grep -c "..*" )
   if [ "${folder_count}" = "1" ]
   then
-    if [ "${debug}" != "0" ]
-    then
-      echo "Message:  {\"playlist\": { \"type\": \"folder\", \"folder\" : \"${folder}\", \"displayName\" : \"${folders}\" } }"
-    fi
     send_to_mqtt "{\"playlist\": { \"type\": \"folder\", \"folder\" : \"${folders}\", \"displayName\" : \"${folders}\" } }"
     return
-  fi
-  if [ "${debug}" != "0" ]
-  then
-    echo "Message:  {\"playlist\": { \"type\": \"unknown\", \"displayName\" : \"<mixed>\" } }"
   fi
   send_to_mqtt "{\"playlist\": { \"type\": \"unknown\", \"displayName\" : \"<mixed>\" } }"
 }
 
 update_mpd_options_state()
 {
-  log_info "update_mpd_options_state()"
-  current_status=$( mpc --host="${mpd_host}" --port="${mpd_port}" status | grep "^volume:" | tail -n 1 )
-  current_status_json=$( echo "${current_status}" | sed -e "s#\([^ ]*\): *\([^ ]*\)#\"\1\": \"\2\",#g" -e "s#^#{ \"options\": { #" -e "s#,\$# } }#" )
-  if [ "${debug}" != "0" ]
-  then
-    echo "Message:  ${current_status_json}"
-  fi
+#  log_info "update_mpd_options_state()"
+#  current_playnr=$( mpc --host="${mpd_host}" --port="${mpd_port}" status | head -n 2 |tail -n 1)
+  current_status=$( mpc --host="${mpd_host}" --port="${mpd_port}" status | grep "^volume:" | tail -n 1 ) 
+  current_status_json=$( echo ${current_status} | sed -e "s#\([^ ]*\): *\([^ ]*\)#\"\1\": \"\2\",#g" -e "s#^#{ \"options\": { #" -e "s#,\$# } } #" )
   send_to_mqtt "${current_status_json}"
 }
 
 validate_mpd_states()
 {
-  log_info "validate_mpd_states()"
+#  log_info "validate_mpd_states()"
   #Wait here to collect some invalidations. Use random to avoid to precise time overlap
   sleep "0.$( expr "100" "+" $RANDOM "%" "100" )"
   # Find entries in file. f there are delete them in a in-place operation.
@@ -268,7 +252,8 @@ loop_for_mpd_change()
   do
     while IFS= read -r changed_topic
     do
-      # Infos come up often here in a fast sequenced group. Want to prevent MQTT from flooding. We don't have mutex stuff here so use a file as queue with atomiv operations.
+      # Infos come up often here in a fast sequenced group. Want to prevent MQTT from flooding.
+      # We don't have mutex stuff here so use a file as queue with atomiv operations.
       case ${changed_topic} in
         "player")
           echo ${changed_topic} >> ${invalidate_file}
@@ -284,7 +269,7 @@ loop_for_mpd_change()
         ;;
       esac
     done < <( mpc --host="${mpd_host}" --port="${mpd_port}" idleloop "player" "playlist" "options" )
-    log_error "Connection to mpd lost."
+    log_error "ERROR: Connection to mpd lost."
     #Clean up
     rm ${invalidate_file}
     sleep 60
@@ -294,11 +279,7 @@ loop_for_mpd_change()
 
 interprete_mqtt_player_command()
 {
-  if [ "${debug}" != "0" ]
-  then
-    echo "interprete_mqtt_player_command( $1 )"
-  fi
-  
+  log_info "interprete_mqtt_player_command( $1)" 
   #strip spaces
   command=$( echo "$1" | sed -e "s#^ *##" -e "s# *\$##" )
   #strip quotes
@@ -306,7 +287,7 @@ interprete_mqtt_player_command()
   
   case "${command}" in
     "play")
-      mpc --host="${mpd_host}" --port="${mpd_port}" "${command}"
+      mpc --host="${mpd_host}" --port="${mpd_port}" "${command}" 
     ;;
     "pause")
       mpc --host="${mpd_host}" --port="${mpd_port}" "${command}"
@@ -330,17 +311,14 @@ interprete_mqtt_player_command()
       mpc --host="${mpd_host}" --port="${mpd_port}" "${command}"
     ;;
     "*")
-      log_error "Unknown command for options: \"${command}\" full message was \"$1\""
+      log_error "ERROR: Unknown command for options: \"${command}\" full message was \"$1\""
     ;;
   esac
 }
 
 interprete_mqtt_option_onofftoggle()
 {
-  if [ "${debug}" != "0" ]
-  then
-    echo "interprete_mqtt_option_onofftoggle( $1, $2 )"
-  fi
+  log_info  "interprete_mqtt_option_onofftoggle( $1, $2 )" 
 
   command_name="$2"
   command="$( echo "$1" | jq --compact-output --raw-output ".$2" )"
@@ -361,10 +339,7 @@ interprete_mqtt_option_onofftoggle()
 
 interprete_mqtt_options_command()
 {
-  if [ "${debug}" != "0" ]
-  then
-    echo "interprete_mqtt_options_command( $1 )"
-  fi
+  log_info "interprete_mqtt_options_command( $1 )"
   
   interprete_mqtt_option_onofftoggle "$1" "random"
   interprete_mqtt_option_onofftoggle "$1" "repeat"
@@ -378,7 +353,7 @@ interprete_mqtt_options_command()
     then
       mpc --host="${mpd_host}" --port="${mpd_port}" "replaygain" "${replaygain}"
     else
-      log_error "The option replaygain must have one of the values: 'off', 'track' or 'album'."
+      log_error "ERROR: The option replaygain must have one of the values: 'off', 'track' or 'album'."
     fi
   fi
 
@@ -390,7 +365,7 @@ interprete_mqtt_options_command()
     then
       mpc --host="${mpd_host}" --port="${mpd_port}" "volume" "${volume}"
     else
-      log_error "The option volume must have a value with format: '[-+]<num>'"
+      log_error "ERROR: The option volume must have a value with format: '[-+]<num>'"
     fi
   fi
 }
@@ -400,6 +375,8 @@ interprete_mqtt_queue_command()
   log_info "interprete_mqtt_queue_command( $1 )"
   del=$( echo "$1" | jq --compact-output --raw-output '.del' )
   clear=$( echo "$1" | jq --compact-output --raw-output '.clear' )
+  ls=$( echo "$1" | jq --compact-output --raw-output '.ls' )
+  lsqueue=$( echo "$1" | jq --compact-output --raw-output '.lsqueue' )
   insert=$( echo "$1" | jq --compact-output --raw-output '.insert' )
   add=$( echo "$1" | jq --compact-output --raw-output '.add' )
   searchadd=$( echo "$1" | jq --compact-output --raw-output '.searchadd' )
@@ -419,6 +396,17 @@ interprete_mqtt_queue_command()
       mpc --host="${mpd_host}" --port="${mpd_port}" "clear"
     fi
   fi
+  if [ "${ls}" != "null"  -a  "${ls}" != "" ]
+  then
+    message=$(mpc --host="${mpd_host}" --port="${mpd_port}" ls "${ls}" | awk '{ print NR " " $0}' | sort -n -r )
+    echo "$message" | while read x; do send_to_mqtt  "{ \"lsdir\":\" $x \"  }" ; sleep 0.1 ; done
+  fi
+  if [ "${lsqueue}" != "null"  -a  "${lsqueue}" != "" ]
+  then
+    message=$( mpc --host="${mpd_host}" --port="${mpd_port}" "playlist" | awk '{ print NR " " $0}' | sort -n -r )
+    echo "$message" | while read x; do send_to_mqtt  "{\"lsqueue\":\" $x \" }" ; sleep 0.1 ; done
+  fi
+
   if [ "${insert}" != "null"  -a  "${insert}" != "" ]
   then
     mpc --host="${mpd_host}" --port="${mpd_port}" "insert" "${insert}"
@@ -437,13 +425,19 @@ interprete_mqtt_queue_command()
   fi
   if [ "${loaddir}" != "null"  -a  "${loaddir}" != "" ]
   then
+    mpc --host="${mpd_host}" --port="${mpd_port}" "clear"
+    mpc --host="${mpd_host}" --port="${mpd_port}" "single" "on"
+    mpc --host="${mpd_host}" --port="${mpd_port}" "repeat" "on"
+    mpc --host="${mpd_host}" --port="${mpd_port}" "random" "off"
+    mpc --host="${mpd_host}" --port="${mpd_port}" "consume" "off"
+    mpc --host="${mpd_host}" --port="${mpd_port}" "status"
     mpc --host="${mpd_host}" --port="${mpd_port}" "ls" "${loaddir}" | sort | while read x; do mpc --host="${mpd_host}" --port="${mpd_port}" "load" "$x" ; done
   fi
   if [ "${play}" != "null"  -a  "${play}" != "" ]
   then
     #to lower case
     play=$( echo "${play}" | sed "s/\([A-Z]\)/\L\1/g" )
-    if [ "${play}" = "on"  -o  "${play}" = "yes"  -o  "${play}" = "true"  -o  "${play}" = "1" ]
+    if [ "${play}" = "on"  -o  "${play}" = "yes"  -o  "${play}" = "true"  ]
     then
       mpc --host="${mpd_host}" --port="${mpd_port}" "play"
     else
@@ -474,7 +468,7 @@ interprete_mqtt_command()
   fi
   if [ "${player}" = "null"  -a  "${options}" = "null"  -a  "${queue}" = "null" ]
   then
-    log_error "Unknown command from mqtt: \"${command_name}\" full message was \"$1\""
+    log_error "ERROR: Unknown command from mqtt: \"${command_name}\" full message was \"$1\""
   fi
 }
 
@@ -486,16 +480,17 @@ loop_for_mqtt_set()
     do
       interprete_mqtt_command "${line}" &
     done < <( mosquitto_sub -h "${mqtt_server}" -t "${mqtt_topic_set}" -u "${mqtt_user}" -P "${mqtt_password}" )
-    log_error "Connection to mqtt lost."
+    log_error "ERROR: Connection to mqtt lost."
     sleep 60
     log_info "Try reconnect to mqtt."
   done
 }
 
-mpc --host="${mpd_host}" --port="${mpd_port}" status
+#MPD test
+mpc --host="${mpd_host}" --port="${mpd_port}" status 
 if [ "$?" != "0" ]
 then
-  log_error "Mpc got an error - exit script."
+  log_error "ERROR: Mpc got an error - exit script."
   ping "${mpd_server}" -c 1
   exit 2
 fi
@@ -504,11 +499,12 @@ fi
 mosquitto_pub -h "${mqtt_server}" -t "${mqtt_topic_set}" --null-message  -u "${mqtt_user}" -P "${mqtt_password}"
 if [ "$?" != "0" ]
 then
-  log_error "Mqtt failed to test host - exit script."
+  log_error "ERROR: Mqtt failed to test host - exit script."
   ping "${mqtt_server}" -c 1
   exit 3
 fi
 
+echo "Initialisation OK"
 #send initial states to MQTT
 update_mpd_player_state
 update_mpd_playlist_state
