@@ -1,3 +1,16 @@
+
+# Personal Remarks #
+
+At first I make some remarks on the original work of https://github.com/orbifly/mpd2mqtt. I made some small changes that might make it easier to understand and some extensions that may make it more usefull. 
+
+This program is meant to be a bridge between "The Music Player Daemon" on linux (short MPD) and a MQTT broker and MQTT client. It supports two-way communication between the MPD and the MQTT client. The program can run anywhere in your network although the MPD system or the MQTT broker are the most obvious choice. In the configuration file (./data/mpd2mqtt.conf) of this program (./mpd2mqtt.sh) are lines that describe the location of the MPD server and the MQTT broker. The communication of this program with the broker is by means of calls to mosquitto_sub and mosquitto_pub. The communication with the MPD server is by calls to the mpc program. So these programs must be installed in your Linux system.
+
+The program is written in bash and is not so easy to understand. At startup the program checks the existence of the mpd system and the broker system and then runs an interpreter that waits for mqtt commands. But before that it forks a subprogram that just listens for information from the mpd server (it uses for this the output of a "mpc idleloop" call).
+
+The original program implements the most obvious mpd commands (such as next song in the queue, volume up/down, stop, play, pause, repeat, random and some others). I added a "load" feature. You need the mpc load <file> call to add a playlist file to the (play-)queue. A playlist file can contain songs/mp3's but can also contain an url from a radio station. Because I very often use mpd to play radio stations and because I have many radio stations stored in several subdirectories I also implemented a loaddir command that places m3u files from one directory in the play queue. With a play command you can then select a specific radio station. Because the tuning to a radio station sometimes fails I set the replay and single option first. (see the loaddir command, see also my welle-cli github project).
+
+There are many ways to interact with MPD over a network: there are many clients (windows/linux/android) and this program just adds one more way i.e. by means of MQTT (IoT_MQTT_panel on my android devices). I added a backup file of the data of IoT_MQTT_panel to this project. You only have to import it and fill in the MQTT settings. 
+
 # mpd2mqtt #
 ## Connects a MPD (music player) with MQTT (broker) in both ways. ##
 
