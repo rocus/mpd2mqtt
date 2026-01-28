@@ -11,8 +11,10 @@ The original program implements the most obvious mpd commands (such as next song
 
 There are many ways to interact with MPD over a network: there are many clients (windows/linux/android) and this program just adds one more way i.e. by means of MQTT (IoT_MQTT_panel on my android devices). I added a backup file of the data of IoT_MQTT_panel to this project. You only have to import it and fill in the MQTT settings. 
 
+
 # mpd2mqtt #
 ## Connects a MPD (music player) with MQTT (broker) in both ways. ##
+
 
 This can be helpful if you want to connect a MPD with a node-red.
 The connection is both-ways: If any client changes the state of MPD the MQTT will be informed. On the other hand you can operate your MPD by sending messages to MQTT broker.
